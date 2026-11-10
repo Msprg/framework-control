@@ -106,7 +106,9 @@
         <Directory Id='TARGETDIR' Name='SourceDir'>
             <!-- Standard system folders, declared so uninstall can remove runtime-created shortcuts, icon, and config -->
             <Directory Id='ProgramMenuFolder' />
-            <Directory Id='CommonDesktopFolder' />
+            <!-- DesktopFolder is the all-users desktop for this per-machine package. (CommonDesktopFolder is not a
+                 Windows Installer folder property; declared like this it resolved to the drive root.) -->
+            <Directory Id='DesktopFolder' />
             <Directory Id='CommonAppDataFolder'>
                 <Directory Id='ProgramDataFrameworkControlDir' Name='FrameworkControl'>
                     <Directory Id='ProgramDataAssetsDir' Name='assets' />
@@ -222,8 +224,8 @@
                         <!-- Shortcuts (both app-mode .lnk and default-browser .url variants) -->
                         <RemoveFile Id='RemoveStartMenuLnk' Name='Framework Control.lnk' On='uninstall' Directory='ProgramMenuFolder'/>
                         <RemoveFile Id='RemoveStartMenuUrl' Name='Framework Control.url' On='uninstall' Directory='ProgramMenuFolder'/>
-                        <RemoveFile Id='RemoveDesktopLnk' Name='Framework Control.lnk' On='uninstall' Directory='CommonDesktopFolder'/>
-                        <RemoveFile Id='RemoveDesktopUrl' Name='Framework Control.url' On='uninstall' Directory='CommonDesktopFolder'/>
+                        <RemoveFile Id='RemoveDesktopLnk' Name='Framework Control.lnk' On='uninstall' Directory='DesktopFolder'/>
+                        <RemoveFile Id='RemoveDesktopUrl' Name='Framework Control.url' On='uninstall' Directory='DesktopFolder'/>
 
                         <!-- WinSW rolling logs written into the install folder at runtime
                              (active *.log plus the rolled *.out.log.old / *.err.log.old) -->
