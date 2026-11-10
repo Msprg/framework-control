@@ -142,6 +142,37 @@ jobs:
           name: windows-exe
           path: service/target/release/framework-control-service.exe
 
+  msi-upgrade-test:
+    needs: build-msi
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-msi
+          path: new-msi
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+          path: new-exe
+      - name: Download official 0.5.5 MSI (old package to upgrade from)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download 0.5.5 -R ozturkkl/framework-control -p framework-control-service-x86_64.msi -D old-msi
+      - name: Upgrade, uninstall and fresh-install test
+        shell: pwsh
+        run: |
+          ./service/scripts/test-msi-upgrade.ps1 `
+            -OldMsi (Get-ChildItem old-msi/*.msi).FullName `
+            -NewMsi (Get-ChildItem new-msi/*.msi).FullName `
+            -NewExe (Resolve-Path new-exe/framework-control-service.exe).Path `
+            -LogDir "$PWD/msi-logs"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: msi-test-logs
+          path: msi-logs/
+
   build-linux:
     runs-on: ubuntu-latest
     steps:
