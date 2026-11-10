@@ -1,0 +1,173 @@
+# Fork-only test build for the in-process EC backend (feat/in-process-ec).
+# Produces installable artifacts without touching releases, tags or AUR. Not meant for upstream.
+name: In-process EC test build
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: ["feat/in-process-ec"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-ec-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Same values as the official Windows build, so the hosted web app keeps working.
+  FRAMEWORK_CONTROL_PORT: "30912"
+  FRAMEWORK_CONTROL_ALLOWED_ORIGINS: "https://ozturkkl.github.io"
+  FRAMEWORK_CONTROL_UPDATE_REPO: "https://github.com/ozturkkl/framework-control"
+
+jobs:
+  check:
+    name: check ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            test: true
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            test: true
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            test: false
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: service
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+      - name: Install musl-tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: service
+          key: ${{ matrix.target }}
+      - name: cargo check
+        run: cargo check --all-targets --no-default-features --target ${{ matrix.target }}
+      - name: cargo test
+        if: matrix.test
+        run: cargo test --no-default-features --target ${{ matrix.target }} -- --nocapture
+      - name: cargo clippy (warnings only)
+        if: matrix.test
+        run: cargo clippy --no-default-features --target ${{ matrix.target }} 2>&1 | tail -n 200
+      - name: Collect lockfile
+        if: always()
+        run: |
+          mkdir -p ../out
+          cp Cargo.lock ../out/Cargo.lock
+          cargo tree --no-default-features --target ${{ matrix.target }} -i framework_lib > ../out/tree.txt 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: check-${{ matrix.target }}
+          path: out/
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: web
+      - name: Lint (ESLint, Prettier, rustfmt)
+        id: lint
+        continue-on-error: true
+        run: npm run lint
+        working-directory: web
+      - name: Produce formatting patch
+        if: always()
+        run: |
+          (cd web && npx prettier --write . >/dev/null)
+          (cd service && cargo fmt --all)
+          git diff > lint.patch
+          wc -l lint.patch
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lint-patch
+          path: lint.patch
+      - name: Fail if lint failed
+        if: steps.lint.outcome == 'failure'
+        run: exit 1
+
+  build-msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: service
+          key: msi
+      - name: Install WiX Toolset
+        run: choco install wixtoolset --no-progress -y
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build MSI
+        run: node scripts/build-msi.mjs
+        working-directory: web
+        env:
+          GITHUB_PAGES: "false"
+          VITE_BASE: "/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi
+          path: service/target/wix/*.msi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: service/target/release/framework-control-service.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: service
+          key: linux-musl
+      - name: Install musl-tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build Linux binary
+        run: node scripts/build-linux.mjs
+        working-directory: web
+        env:
+          STATIC_BUILD: "true"
+          GITHUB_PAGES: "false"
+          VITE_BASE: "/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-tarball
+          path: service/target/framework-control-*-linux-x86_64.tar.gz
