@@ -77,10 +77,28 @@
             SummaryCodepage='1252'
             />
 
+        <!--
+          The old version is removed only after the new one is installed (afterInstallExecute).
+          Components that keep the same GUID across versions, notably RuntimeDataCleanup below,
+          are then still used by the new product when the old one is removed, so Windows Installer
+          leaves them in place and skips their RemoveFile entries. That is what keeps the user's
+          config, battery history, logs, shortcuts and downloaded tools across upgrades, including
+          upgrades from older packages that would otherwise delete them.
+          Removing the old product first (afterInstallInitialize) removed the component and ran
+          its RemoveFile entries on every upgrade.
+        -->
         <MajorUpgrade
-            Schedule='afterInstallInitialize'
+            Schedule='afterInstallExecute'
             AllowSameVersionUpgrades='yes'
             DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
+
+        <!--
+          With the old product still installed while the new files are copied, Windows Installer's
+          file versioning rules could keep an old unversioned file (the service exe is unversioned).
+          'a' makes every file of this package overwrite what is there; the package ships only its
+          own files, so nothing shared can be downgraded.
+        -->
+        <Property Id='REINSTALLMODE' Value='amus'/>
 
         <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
         <Property Id='DiskPrompt' Value='framework-control-service Installation'/>
@@ -181,13 +199,14 @@
                       are tracked as MSI component files, so they'd otherwise be left behind.
                       (see scripts/create_shortcuts.ps1, src/shortcuts.rs, config.rs)
 
-                      `NOT UPGRADINGPRODUCTCODE` restricts this to a real uninstall. In-app updates
-                      run `msiexec /i ... ADDLOCAL=Binaries` (see src/update.rs); MajorUpgrade
-                      removes the old product first, and this guard prevents that pass from wiping
-                      the user's shortcuts, settings, and logs on every update.
+                      RemoveFile entries run whenever this component is removed. On upgrades
+                      (including in-app updates, `msiexec /i ... ADDLOCAL=Binaries`, see src/update.rs)
+                      it is not removed, because the new product installs the same component before
+                      the old product is removed (see MajorUpgrade above). Keep this GUID stable.
+                      (A component condition such as `NOT UPGRADINGPRODUCTCODE` does not prevent
+                      removal; it only applies when installing.)
                     -->
                     <Component Id='RuntimeDataCleanup' Guid='B6F3C2A1-8D45-4E9C-A3B7-1F0E5D2C7A84'>
-                        <Condition>NOT UPGRADINGPRODUCTCODE</Condition>
                         <!-- Directory key path (avoids registry ICEs), same approach as UninstallShortcut -->
                         <CreateFolder/>
 
