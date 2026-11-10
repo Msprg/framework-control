@@ -287,7 +287,10 @@ impl<C: Probe + 'static> Engine<C> {
                         self.cfg.retry_initial
                     }
                 };
-                debug!("EC: in-process backend unavailable ({}); next attempt in {:?}", reason, backoff);
+                debug!(
+                    "EC: in-process backend unavailable ({}); next attempt in {:?}",
+                    reason, backoff
+                );
                 *slot = Slot::Waiting {
                     reason,
                     retry_at: Instant::now() + backoff,
@@ -345,7 +348,13 @@ fn worker_loop<C>(mut ctx: C, rx: mpsc::Receiver<Job<C>>, shared: Arc<Shared>) {
     // Dropping `rx` drops queued jobs; their callers see the channel close and use the CLI.
 }
 
-fn run_guarded<C: Probe, R, F>(op: &'static str, ctx: &mut C, f: F, shared: &Shared, max_panics: u32) -> Result<R, LibError>
+fn run_guarded<C: Probe, R, F>(
+    op: &'static str,
+    ctx: &mut C,
+    f: F,
+    shared: &Shared,
+    max_panics: u32,
+) -> Result<R, LibError>
 where
     F: FnOnce(&mut C) -> Result<R, String>,
 {
@@ -589,7 +598,9 @@ mod platform {
     use framework_lib::chromium_ec::commands::{ChargeStateCmd, EcRequestChargeStateGetV0};
     use framework_lib::chromium_ec::{CrosEc, CrosEcDriver, CrosEcDriverType, EcCurrentImage, EcError, EcRequestRaw};
 
-    use super::super::framework_tool_parser::{BatteryChargeLimitInfo, PowerBatteryInfo, ThermalParsed, VersionsParsed};
+    use super::super::framework_tool_parser::{
+        BatteryChargeLimitInfo, PowerBatteryInfo, ThermalParsed, VersionsParsed,
+    };
     use super::{memmap, BatteryBlock, ChargerState, Probe};
 
     pub const LIB_VERSION: &str = framework_lib::built_info::PKG_VERSION;
@@ -812,7 +823,9 @@ mod platform {
 
 #[cfg(not(any(windows, target_os = "linux")))]
 mod platform {
-    use super::super::framework_tool_parser::{BatteryChargeLimitInfo, PowerBatteryInfo, ThermalParsed, VersionsParsed};
+    use super::super::framework_tool_parser::{
+        BatteryChargeLimitInfo, PowerBatteryInfo, ThermalParsed, VersionsParsed,
+    };
     use super::Probe;
 
     pub const LIB_VERSION: &str = "n/a";
@@ -1146,7 +1159,10 @@ mod tests {
         .into_iter()
         .map(|(i, n)| (i, n.to_string()))
         .collect();
-        let fans = ["Left Fan", "Right Fan", "Fan 2", "Fan 3"].iter().map(|s| s.to_string()).collect();
+        let fans = ["Left Fan", "Right Fan", "Fan 2", "Fan 3"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         (names, fans)
     }
 
@@ -1168,7 +1184,10 @@ mod tests {
         assert_eq!(ours_fans, cli_fans);
         assert_eq!(ours.temps.get("apu_f75303@4d"), Some(&61));
         assert!(!ours.temps.contains_key("gpu_temp"));
-        assert_eq!(ours_fans, vec![("Left Fan".to_string(), 2165), ("Right Fan".to_string(), 0)]);
+        assert_eq!(
+            ours_fans,
+            vec![("Left Fan".to_string(), 2165), ("Right Fan".to_string(), 0)]
+        );
     }
 
     #[test]
@@ -1209,10 +1228,16 @@ mod tests {
         s += "Battery Status\n";
         s += &format!("  AC is:            {}\n", ac);
         s += "  Battery is:       connected\n";
-        s += &format!("  Battery LFCC:     {:#?} mAh (Last Full Charge Capacity)\n", b.lfcc_mah);
+        s += &format!(
+            "  Battery LFCC:     {:#?} mAh (Last Full Charge Capacity)\n",
+            b.lfcc_mah
+        );
         s += &format!("  Battery Capacity: {} mAh\n", b.remaining_capacity_mah);
         s += "                    40.123 Wh\n";
-        s += &format!("  Charge level:     {:?}%\n", 100 * b.remaining_capacity_mah / b.lfcc_mah);
+        s += &format!(
+            "  Charge level:     {:?}%\n",
+            100 * b.remaining_capacity_mah / b.lfcc_mah
+        );
         s += "  Manufacturer:     NVT\n  Model Number:     FRANDBA\n  Serial Number:    0204\n  Battery Type:     LION\n";
         s += &format!(
             "  Present Voltage:  {}.{} V\n",

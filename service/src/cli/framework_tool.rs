@@ -1,7 +1,6 @@
 use super::ec_lib::{self, LibError};
 use super::framework_tool_parser::{
-    parse_power, parse_thermal, parse_versions, BatteryChargeLimitInfo, PowerBatteryInfo, ThermalParsed,
-    VersionsParsed,
+    parse_power, parse_thermal, parse_versions, BatteryChargeLimitInfo, PowerBatteryInfo, ThermalParsed, VersionsParsed,
 };
 use crate::types::FrameworkToolConfig;
 use crate::utils::{download as dl, github as gh, global_cache};
@@ -72,10 +71,14 @@ impl FrameworkTool {
     pub async fn power(&self) -> Result<PowerBatteryInfo, String> {
         const TTL: Duration = Duration::from_secs(5);
         global_cache::cache_get_or_update("framework_tool.power", TTL, true, || async {
-            self.exec("power", |ec| ec.power(), || async {
-                let out = self.run(&["--power", "-vv"]).await?;
-                Ok(parse_power(&out))
-            })
+            self.exec(
+                "power",
+                |ec| ec.power(),
+                || async {
+                    let out = self.run(&["--power", "-vv"]).await?;
+                    Ok(parse_power(&out))
+                },
+            )
             .await
         })
         .await
@@ -84,10 +87,14 @@ impl FrameworkTool {
     pub async fn thermal(&self) -> Result<ThermalParsed, String> {
         const TTL: Duration = Duration::from_secs(1);
         global_cache::cache_get_or_update("framework_tool.thermal", TTL, true, || async {
-            self.exec("thermal", |ec| ec.thermal(), || async {
-                let out = self.run(&["--thermal"]).await?;
-                Ok(parse_thermal(&out))
-            })
+            self.exec(
+                "thermal",
+                |ec| ec.thermal(),
+                || async {
+                    let out = self.run(&["--thermal"]).await?;
+                    Ok(parse_thermal(&out))
+                },
+            )
             .await
         })
         .await
@@ -121,25 +128,33 @@ impl FrameworkTool {
     }
 
     pub async fn set_fan_duty(&self, percent: u32, fan_index: Option<u32>) -> Result<(), String> {
-        self.exec("set_fan_duty", move |ec| ec.set_fan_duty(percent, fan_index), || async {
-            let percent_s = percent.to_string();
-            let fan_idx_s = fan_index.map(|idx| idx.to_string());
-            let mut args: Vec<&str> = vec!["--fansetduty"];
-            if let Some(ref idxs) = fan_idx_s {
-                args.push(idxs.as_str());
-            }
-            args.push(percent_s.as_str());
-            let _ = self.run(&args).await?;
-            Ok(())
-        })
+        self.exec(
+            "set_fan_duty",
+            move |ec| ec.set_fan_duty(percent, fan_index),
+            || async {
+                let percent_s = percent.to_string();
+                let fan_idx_s = fan_index.map(|idx| idx.to_string());
+                let mut args: Vec<&str> = vec!["--fansetduty"];
+                if let Some(ref idxs) = fan_idx_s {
+                    args.push(idxs.as_str());
+                }
+                args.push(percent_s.as_str());
+                let _ = self.run(&args).await?;
+                Ok(())
+            },
+        )
         .await
     }
 
     pub async fn autofanctrl(&self) -> Result<(), String> {
-        self.exec("autofanctrl", |ec| ec.autofanctrl(), || async {
-            let _ = self.run(&["--autofanctrl"]).await?;
-            Ok(())
-        })
+        self.exec(
+            "autofanctrl",
+            |ec| ec.autofanctrl(),
+            || async {
+                let _ = self.run(&["--autofanctrl"]).await?;
+                Ok(())
+            },
+        )
         .await
     }
 
@@ -148,15 +163,19 @@ impl FrameworkTool {
         use super::framework_tool_parser::parse_charge_limit;
         const TTL: Duration = Duration::from_secs(5);
         global_cache::cache_get_or_update("framework_tool.charge_limit", TTL, true, || async {
-            self.exec("charge_limit_get", |ec| ec.charge_limit_get(), || async {
-                let out = self.run(&["--charge-limit"]).await?;
-                let info = parse_charge_limit(&out);
-                if info.charge_limit_min_pct.is_some() || info.charge_limit_max_pct.is_some() {
-                    Ok(info)
-                } else {
-                    Err("failed to parse charge limit".to_string())
-                }
-            })
+            self.exec(
+                "charge_limit_get",
+                |ec| ec.charge_limit_get(),
+                || async {
+                    let out = self.run(&["--charge-limit"]).await?;
+                    let info = parse_charge_limit(&out);
+                    if info.charge_limit_min_pct.is_some() || info.charge_limit_max_pct.is_some() {
+                        Ok(info)
+                    } else {
+                        Err("failed to parse charge limit".to_string())
+                    }
+                },
+            )
             .await
         })
         .await
@@ -164,11 +183,15 @@ impl FrameworkTool {
 
     /// Set max charge limit percentage
     pub async fn charge_limit_set(&self, max_pct: u8) -> Result<(), String> {
-        self.exec("charge_limit_set", move |ec| ec.charge_limit_set(max_pct), || async {
-            let arg = max_pct.to_string();
-            let _ = self.run(&["--charge-limit", &arg]).await?;
-            Ok(())
-        })
+        self.exec(
+            "charge_limit_set",
+            move |ec| ec.charge_limit_set(max_pct),
+            || async {
+                let arg = max_pct.to_string();
+                let _ = self.run(&["--charge-limit", &arg]).await?;
+                Ok(())
+            },
+        )
         .await
     }
 
@@ -273,7 +296,10 @@ fn note_fallback(op: &'static str, e: &LibError) {
                 .map(|mut w| w.insert(op))
                 .unwrap_or(false);
             if first {
-                warn!("EC: in-process {} failed ({}); using framework_tool for this call", op, e);
+                warn!(
+                    "EC: in-process {} failed ({}); using framework_tool for this call",
+                    op, e
+                );
             } else {
                 tracing::debug!("EC: in-process {} failed ({}); using framework_tool", op, e);
             }
@@ -502,7 +528,10 @@ mod tests {
             LibError::Ec("x".into()),
             LibError::Panicked("p".into()),
         ] {
-            let r = with_fallback("t", async move { Err::<u8, LibError>(e) }, || async { Ok::<u8, String>(2) }).await;
+            let r = with_fallback("t", async move { Err::<u8, LibError>(e) }, || async {
+                Ok::<u8, String>(2)
+            })
+            .await;
             assert_eq!(r, Ok(2));
         }
     }

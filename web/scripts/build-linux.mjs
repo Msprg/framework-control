@@ -143,7 +143,10 @@ async function main() {
 	fs.chmodSync(binaryDest, 0o755);
 
 	// Third-party license notices for code linked into the binary
-	fs.copyFileSync(path.resolve(serviceDir, 'THIRD_PARTY_NOTICES.md'), path.resolve(distDir, 'THIRD_PARTY_NOTICES.md'));
+	fs.copyFileSync(
+		path.resolve(serviceDir, 'THIRD_PARTY_NOTICES.md'),
+		path.resolve(distDir, 'THIRD_PARTY_NOTICES.md'),
+	);
 
 	// Generate minimal service file (for reference)
 	const serviceFile = path.resolve(distDir, 'framework-control.service');

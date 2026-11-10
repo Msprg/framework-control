@@ -42,7 +42,10 @@ impl Report {
 pub async fn run(args: &[String]) -> i32 {
     let write = args.iter().any(|a| a == "--write");
     let explicit = args.iter().find(|a| !a.starts_with("--")).cloned();
-    println!("framework-control EC self-test{}", if write { "" } else { " (read-only)" });
+    println!(
+        "framework-control EC self-test{}",
+        if write { "" } else { " (read-only)" }
+    );
 
     let Some(path) = explicit.or_else(default_cli_path) else {
         println!("  FAIL  no framework_tool found; pass its path");
@@ -50,7 +53,11 @@ pub async fn run(args: &[String]) -> i32 {
     };
     let cli = FrameworkTool::unchecked(path.clone());
     let cli_version = cli.cli_versions().await.ok().and_then(|v| v.tool_version);
-    println!("CLI:        {} (framework_tool {})", path, cli_version.as_deref().unwrap_or("?"));
+    println!(
+        "CLI:        {} (framework_tool {})",
+        path,
+        cli_version.as_deref().unwrap_or("?")
+    );
     println!("in-process: {}", ec_lib::label());
 
     let mut r = Report { failures: 0 };
@@ -108,7 +115,11 @@ pub async fn run(args: &[String]) -> i32 {
                 l.charge_limit_min_pct, l.charge_limit_max_pct, c.charge_limit_min_pct, c.charge_limit_max_pct
             ),
         ),
-        (l, c) => r.fail(&format!("in-process {:?} / CLI {:?}", l.as_ref().err(), c.as_ref().err())),
+        (l, c) => r.fail(&format!(
+            "in-process {:?} / CLI {:?}",
+            l.as_ref().err(),
+            c.as_ref().err()
+        )),
     }
     if write {
         match lib_cl.as_ref().ok().and_then(|l| l.charge_limit_max_pct) {
@@ -116,11 +127,18 @@ pub async fn run(args: &[String]) -> i32 {
                 let set = ec_lib::call("charge_limit_set", move |ec| ec.charge_limit_set(max)).await;
                 let after = ec_lib::call("charge_limit_get", |ec| ec.charge_limit_get()).await;
                 let before = lib_cl.as_ref().ok();
-                let unchanged = after.as_ref().ok().map(|a| (a.charge_limit_min_pct, a.charge_limit_max_pct))
+                let unchanged = after
+                    .as_ref()
+                    .ok()
+                    .map(|a| (a.charge_limit_min_pct, a.charge_limit_max_pct))
                     == before.map(|b| (b.charge_limit_min_pct, b.charge_limit_max_pct));
                 r.check(
                     set.is_ok() && unchanged,
-                    &format!("write current max {max}% back in-process: {:?}, reads back {:?}", set, after.ok()),
+                    &format!(
+                        "write current max {max}% back in-process: {:?}, reads back {:?}",
+                        set,
+                        after.ok()
+                    ),
                 );
             }
             None => r.note("no current charge limit to write back"),
@@ -139,10 +157,17 @@ pub async fn run(args: &[String]) -> i32 {
     // ---- timing -------------------------------------------------------------------------------
     println!("\n[timing]");
     let cli_ref = &cli;
-    let lib_thermal = time_n(50, || async { ec_lib::call("thermal", |ec| ec.thermal()).await.is_ok() }).await;
+    let lib_thermal = time_n(50, || async {
+        ec_lib::call("thermal", |ec| ec.thermal()).await.is_ok()
+    })
+    .await;
     let cli_thermal = time_n(10, move || async move { cli_ref.run_cli(&["--thermal"]).await.is_ok() }).await;
     let lib_power = time_n(20, || async { ec_lib::call("power", |ec| ec.power()).await.is_ok() }).await;
-    let cli_power = time_n(5, move || async move { cli_ref.run_cli(&["--power", "-vv"]).await.is_ok() }).await;
+    let cli_power = time_n(
+        5,
+        move || async move { cli_ref.run_cli(&["--power", "-vv"]).await.is_ok() },
+    )
+    .await;
     print_timing("thermal in-process", &lib_thermal);
     print_timing("thermal CLI", &cli_thermal);
     print_timing("power in-process", &lib_power);
@@ -183,10 +208,7 @@ fn compare_thermal(r: &mut Report, lib: &ThermalParsed, cli: &ThermalParsed) {
     );
     for (name, lv) in &lib.temps {
         if let Some(cv) = cli.temps.get(name) {
-            r.check(
-                (lv - cv).abs() <= 3,
-                &format!("{name}: {lv} °C (CLI {cv} °C)"),
-            );
+            r.check((lv - cv).abs() <= 3, &format!("{name}: {lv} °C (CLI {cv} °C)"));
         }
     }
     let lf: Vec<&str> = lib.fans.iter().map(|f| f.name.as_str()).collect();
@@ -205,7 +227,10 @@ fn compare_thermal(r: &mut Report, lib: &ThermalParsed, cli: &ThermalParsed) {
 fn check_config_sensors(r: &mut Report, lib: &ThermalParsed, cli: &ThermalParsed) {
     let path = crate::config::config_path();
     let Ok(text) = std::fs::read_to_string(&path) else {
-        r.note(&format!("no config at {} to check sensor names against", path.display()));
+        r.note(&format!(
+            "no config at {} to check sensor names against",
+            path.display()
+        ));
         return;
     };
     let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
@@ -224,7 +249,9 @@ fn check_config_sensors(r: &mut Report, lib: &ThermalParsed, cli: &ThermalParsed
         } else if cli.temps.contains_key(&name) {
             r.fail(&format!("config sensor {name} reported by the CLI but not in-process"));
         } else {
-            r.note(&format!("config sensor {name} not reported by either backend right now"));
+            r.note(&format!(
+                "config sensor {name} not reported by either backend right now"
+            ));
         }
     }
 }
@@ -271,7 +298,11 @@ fn compare_power(r: &mut Report, l: &PowerBatteryInfo, c: &PowerBatteryInfo) {
         ),
     );
     for (name, lv, cv) in [
-        ("full charge capacity", l.last_full_charge_capacity_mah, c.last_full_charge_capacity_mah),
+        (
+            "full charge capacity",
+            l.last_full_charge_capacity_mah,
+            c.last_full_charge_capacity_mah,
+        ),
         ("design capacity", l.design_capacity_mah, c.design_capacity_mah),
         ("cycle count", l.cycle_count, c.cycle_count),
     ] {
@@ -279,7 +310,10 @@ fn compare_power(r: &mut Report, l: &PowerBatteryInfo, c: &PowerBatteryInfo) {
     }
     r.check(
         voltage_matches(l.design_voltage_mv, c.design_voltage_mv, 0),
-        &format!("design voltage: {:?} mV (CLI {:?})", l.design_voltage_mv, c.design_voltage_mv),
+        &format!(
+            "design voltage: {:?} mV (CLI {:?})",
+            l.design_voltage_mv, c.design_voltage_mv
+        ),
     );
     let close = |a: Option<u32>, b: Option<u32>, tol: u32| match (a, b) {
         (Some(a), Some(b)) => a.abs_diff(b) <= tol,
@@ -287,7 +321,10 @@ fn compare_power(r: &mut Report, l: &PowerBatteryInfo, c: &PowerBatteryInfo) {
     };
     r.check(
         close(l.remaining_capacity_mah, c.remaining_capacity_mah, 50),
-        &format!("remaining: {:?} mAh (CLI {:?})", l.remaining_capacity_mah, c.remaining_capacity_mah),
+        &format!(
+            "remaining: {:?} mAh (CLI {:?})",
+            l.remaining_capacity_mah, c.remaining_capacity_mah
+        ),
     );
     r.check(
         close(l.percentage, c.percentage, 1),
@@ -299,7 +336,10 @@ fn compare_power(r: &mut Report, l: &PowerBatteryInfo, c: &PowerBatteryInfo) {
     );
     r.check(
         voltage_matches(l.present_voltage_mv, c.present_voltage_mv, 300),
-        &format!("voltage: {:?} mV (CLI {:?})", l.present_voltage_mv, c.present_voltage_mv),
+        &format!(
+            "voltage: {:?} mV (CLI {:?})",
+            l.present_voltage_mv, c.present_voltage_mv
+        ),
     );
     r.check(
         l.charging == c.charging && l.discharging == c.discharging,
@@ -320,7 +360,10 @@ fn compare_power(r: &mut Report, l: &PowerBatteryInfo, c: &PowerBatteryInfo) {
             c.charge_input_current_ma
         ),
     );
-    r.note(&format!("rate: {:?} mA (CLI {:?})", l.present_rate_ma, c.present_rate_ma));
+    r.note(&format!(
+        "rate: {:?} mA (CLI {:?})",
+        l.present_rate_ma, c.present_rate_ma
+    ));
 }
 
 fn compare_versions(r: &mut Report, l: &VersionsParsed, c: &VersionsParsed) {
