@@ -87,38 +87,29 @@ fn parse_fan_line(line: &str, position: usize) -> Option<FanReading> {
 }
 
 /// Parse output of `framework_tool --charge-limit` which prints: "Minimum X%, Maximum Y%"
+/// (both on one line). Each value is the first number after its keyword.
 pub fn parse_charge_limit(stdout: &str) -> BatteryChargeLimitInfo {
     let mut info = BatteryChargeLimitInfo::default();
     for line in stdout.lines() {
-        let l = line.trim().to_ascii_lowercase();
-        if l.contains("minimum") {
-            if let Some(p) = l.split_whitespace().find(|t| t.ends_with('%')) {
-                let n = p.trim_end_matches('%').parse::<u8>().ok();
-                if let Some(v) = n {
-                    info.charge_limit_min_pct = Some(v);
-                }
-            } else {
-                // fallback: scan digits
-                if let Some(tok) = l
-                    .split(|c: char| !c.is_ascii_alphanumeric())
-                    .find(|t| t.chars().all(|c| c.is_ascii_digit()))
-                {
-                    info.charge_limit_min_pct = tok.parse::<u8>().ok();
-                }
+        let l = line.to_ascii_lowercase();
+        let tokens: Vec<&str> = l
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '%'))
+            .filter(|t| !t.is_empty())
+            .collect();
+        for (i, tok) in tokens.iter().enumerate() {
+            let is_min = *tok == "minimum";
+            if !is_min && *tok != "maximum" {
+                continue;
             }
-        }
-        if l.contains("maximum") {
-            if let Some(p) = l.split_whitespace().find(|t| t.ends_with('%')) {
-                let n = p.trim_end_matches('%').parse::<u8>().ok();
-                if let Some(v) = n {
+            let value = tokens[i + 1..]
+                .iter()
+                .take_while(|t| **t != "minimum" && **t != "maximum")
+                .find_map(|t| t.trim_end_matches('%').parse::<u8>().ok());
+            if let Some(v) = value {
+                if is_min {
+                    info.charge_limit_min_pct = Some(v);
+                } else {
                     info.charge_limit_max_pct = Some(v);
-                }
-            } else {
-                if let Some(tok) = l
-                    .split(|c: char| !c.is_ascii_alphanumeric())
-                    .find(|t| t.chars().all(|c| c.is_ascii_digit()))
-                {
-                    info.charge_limit_max_pct = tok.parse::<u8>().ok();
                 }
             }
         }
@@ -447,6 +438,21 @@ mod tests {
 "#;
         let t = parse_thermal(s);
         assert_eq!(rpms(&t), vec![1200]);
+    }
+    #[test]
+    fn parse_charge_limit_single_line() {
+        // framework_tool 0.6.6 prints both values on one line.
+        let c = parse_charge_limit("Minimum 0%, Maximum 85%\n");
+        assert_eq!(c.charge_limit_min_pct, Some(0));
+        assert_eq!(c.charge_limit_max_pct, Some(85));
+        let c = parse_charge_limit("Minimum 20%, Maximum 100%");
+        assert_eq!((c.charge_limit_min_pct, c.charge_limit_max_pct), (Some(20), Some(100)));
+    }
+    #[test]
+    fn parse_charge_limit_separate_lines() {
+        let c = parse_charge_limit("Minimum: 5%\nMaximum: 80%\n");
+        assert_eq!((c.charge_limit_min_pct, c.charge_limit_max_pct), (Some(5), Some(80)));
+        assert_eq!(parse_charge_limit("garbage").charge_limit_max_pct, None);
     }
     #[test]
     fn parse_versions_tool_version() {
