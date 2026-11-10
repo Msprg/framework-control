@@ -4,7 +4,7 @@ This document captures the current state, architecture, and key technical detail
 
 ### Purpose
 
-Local service (Windows + Linux) + Svelte web UI to monitor telemetry and control core platform features (fans, power, charging). Uses the official `framework_tool` CLI for EC interactions. Power management uses RyzenAdj on Windows and native kernel interfaces (AMD P-State EPP, cpufreq) on Linux. API runs on loopback at a configured port (set via `FRAMEWORK_CONTROL_PORT`).
+Local service (Windows + Linux) + Svelte web UI to monitor telemetry and control core platform features (fans, power, charging). Talks to the EC in-process through `framework_lib` (the library behind `framework_tool`), falling back to the official `framework_tool` CLI whenever the in-process path can't answer. Power management uses RyzenAdj on Windows and native kernel interfaces (AMD P-State EPP, cpufreq) on Linux. API runs on loopback at a configured port (set via `FRAMEWORK_CONTROL_PORT`).
 
 ### High-Level Architecture
 
@@ -43,6 +43,7 @@ Local service (Windows + Linux) + Svelte web UI to monitor telemetry and control
   - `service/src/state.rs`: shared `AppState` — `framework_tool` lock, platform-specific power backend (`ryzenadj` on Windows via `#[cfg(target_os = "windows")]`, `linux_power` on Linux via `#[cfg(target_os = "linux")]`), `LiveConfig`, in‑memory `telemetry_samples` and `battery_samples`
 - Background tasks (`service/src/tasks`): `power` (platform-split: Windows uses RyzenAdj, Linux uses native interfaces; both driven by generic `Reconciler`), `fan_curve`, `fan_profiles` (AC/battery auto-switch), `battery`, `battery_history`, `auto_update`, `telemetry`
   - CLI wrappers (`service/src/cli`): `framework_tool.rs`, `ryzen_adj.rs` (Windows only), `linux_power.rs` (Linux only — reads/writes sysfs for AMD P-State EPP, cpufreq governor, and frequency limits)
+  - In-process EC (`service/src/cli/ec_lib.rs`): `framework_lib` (pinned `=0.6.6`, no default features) on one dedicated worker thread, Windows CrosEC driver or Linux `/dev/cros_ec` only (never port I/O). `FrameworkTool` methods try it first and fall back to spawning `framework_tool` per call. Panics are caught; if the EC stops answering afterwards (poisoned library lock) or panics repeat, the backend stops until restart. A call over its 10 s deadline marks it busy (CLI used, late queued calls dropped) until that call returns. Output is shaped like the parsed CLI output (same sensor/fan names). `FRAMEWORK_CONTROL_EC_BACKEND=cli` disables it. `/api/versions` reports the active backend in `ec_backend`. `framework-control-service --ec-selftest [framework_tool path] [--write]` compares both backends on real hardware and times them.
   - Utilities (`service/src/utils`): `github`, `download`, `wget`, `fs`, `reconciler` (generic drift-aware reconciler with quiet-window + cooldown logic), etc.
   - `service/src/static.rs`: static file serving for the UI
   - `service/src/shortcuts.rs`: Desktop shortcut creation for Windows (Edge/Chrome/Brave app mode + .url fallback) and Linux (simple .desktop entry using xdg-open)

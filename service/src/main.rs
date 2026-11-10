@@ -27,6 +27,13 @@ async fn main() {
         .without_time()
         .init();
 
+    // `--ec-selftest [path/to/framework_tool] [--write]`: compare the in-process EC backend with the CLI and exit.
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(pos) = args.iter().position(|a| a == "--ec-selftest") {
+        let code = cli::ec_selftest::run(&args[pos + 1..]).await;
+        std::process::exit(code);
+    }
+
     // If we're only generating OpenAPI, do it immediately and exit without requiring env or starting tasks
     let flag_arg = std::env::args().any(|a| a == "--generate-openapi");
     if flag_arg {

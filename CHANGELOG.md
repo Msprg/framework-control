@@ -1,5 +1,7 @@
 # Unreleased
 
+- **Service: in-process EC access**: Temperatures, fan speeds, battery info, charge limits and fan duty now go through `framework_lib` (the library behind `framework_tool`, pinned to 0.6.6) inside the service instead of spawning `framework_tool` for every call (~1 process per second with the fan curve on). Calls run on one dedicated thread using the Windows CrosEC driver or Linux `/dev/cros_ec`; any error, panic or hang falls back to the CLI for that call, and the in-process path shuts itself off if the library stops responding. Output matches the CLI's, so saved fan curves keep their sensors. Set `FRAMEWORK_CONTROL_EC_BACKEND=cli` to opt out. The device header shows which backend is in use; `framework-control-service --ec-selftest` compares both on a machine. Installers now ship `THIRD_PARTY_NOTICES.md`.
+
 ## 0.5.5 - 2026-10-15
 
 - **NEW: Dashboard layout customization** (#73): Drag panels around, make them full or half width, or hide the ones you don't need. Hiding a panel also disables the feature. Good for disabling sections of the app that don't play nicely with your workflow.

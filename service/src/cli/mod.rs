@@ -1,5 +1,5 @@
-#[cfg(any(windows, target_os = "linux"))]
 pub mod ec_lib;
+pub mod ec_selftest;
 pub mod framework_tool;
 pub mod framework_tool_parser;
 

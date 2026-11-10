@@ -48,6 +48,7 @@
     let displayTitle = "Your Laptop";
     let openImage = IMG_13;
     let toolVersion: string | null = null;
+    let ecBackend: string | null = null;
 
     $: {
         const t = displayTitle.toLowerCase();
@@ -85,6 +86,7 @@
             if (v.mainboard_type) displayTitle = v.mainboard_type;
             if (v.uefi_version) bios = v.uefi_version;
             toolVersion = v.tool_version?.trim() || null;
+            ecBackend = v.ec_backend?.trim() || null;
         } catch {
             console.error("Failed to fetch versions");
         }
@@ -384,6 +386,15 @@
                                         class={infoCardIconClass}
                                     />
                                     <span>framework_tool: {toolVersion}</span>
+                                </div>
+                            {/if}
+                            {#if cliPresent && ecBackend}
+                                <div class={infoCardClass}>
+                                    <Icon
+                                        icon="mdi:chip"
+                                        class={infoCardIconClass}
+                                    />
+                                    <span>EC access: {ecBackend}</span>
                                 </div>
                             {/if}
                         </div>

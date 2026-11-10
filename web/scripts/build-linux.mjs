@@ -142,6 +142,9 @@ async function main() {
 	fs.copyFileSync(binarySource, binaryDest);
 	fs.chmodSync(binaryDest, 0o755);
 
+	// Third-party license notices for code linked into the binary
+	fs.copyFileSync(path.resolve(serviceDir, 'THIRD_PARTY_NOTICES.md'), path.resolve(distDir, 'THIRD_PARTY_NOTICES.md'));
+
 	// Generate minimal service file (for reference)
 	const serviceFile = path.resolve(distDir, 'framework-control.service');
 	fs.writeFileSync(serviceFile, generateMinimalServiceFile(config.port), 'utf8');
@@ -156,7 +159,15 @@ async function main() {
 	const tarballPath = path.resolve(serviceDir, 'target', tarballName);
 
 	console.log('\n[build-linux] Creating release tarball...');
-	await run('tar', ['-czf', tarballPath, '-C', distDir, 'framework-control', 'framework-control.service']);
+	await run('tar', [
+		'-czf',
+		tarballPath,
+		'-C',
+		distDir,
+		'framework-control',
+		'framework-control.service',
+		'THIRD_PARTY_NOTICES.md',
+	]);
 
 	const binarySize = (fs.statSync(binaryDest).size / 1024 / 1024).toFixed(2);
 

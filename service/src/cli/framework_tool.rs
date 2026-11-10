@@ -1,8 +1,11 @@
+use super::ec_lib::{self, LibError};
 use super::framework_tool_parser::{
-    parse_power, parse_thermal, parse_versions, PowerBatteryInfo, ThermalParsed, VersionsParsed,
+    parse_power, parse_thermal, parse_versions, BatteryChargeLimitInfo, PowerBatteryInfo, ThermalParsed,
+    VersionsParsed,
 };
 use crate::types::FrameworkToolConfig;
 use crate::utils::{download as dl, github as gh, global_cache};
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -26,34 +29,54 @@ use tokio::process::Command;
 use tracing::{error, info, warn};
 use which::which;
 
-/// Thin wrapper around the `framework_tool` CLI.
-/// Resolves the binary path once and provides async helpers to run commands.
+/// Access to the EC, via `framework_lib` in-process when possible (see [`ec_lib`]) and the
+/// `framework_tool` CLI otherwise. Every operation tries the in-process backend first and falls
+/// back to spawning the CLI if it can't answer, so callers see the same results either way.
 ///
-/// Resolution strategy:
+/// CLI resolution strategy:
 /// - Prefer a copy alongside the running service binary (direct downloads)
 /// - Then fall back to `framework_tool` on `PATH`
 /// - Windows can optionally auto-install via winget;
 #[derive(Clone)]
 pub struct FrameworkTool {
     pub(crate) path: String,
+    /// `framework_tool`'s own version, recorded when the binary was validated.
+    cli_version: Option<String>,
 }
 
 impl FrameworkTool {
     pub async fn at_path(path: String) -> Result<Self, String> {
         info!("framework_tool resolved at: {}", path);
-        let cli = Self { path };
-        // Validate the binary is runnable with a lightweight call.
-        if let Err(e) = cli.versions().await {
-            return Err(format!("framework_tool not runnable: {}", e));
+        let mut cli = Self::unchecked(path);
+        // Validate the binary itself is runnable (always via the CLI).
+        match cli.cli_versions().await {
+            Ok(v) => cli.cli_version = v.tool_version,
+            Err(e) => return Err(format!("framework_tool not runnable: {}", e)),
         }
         Ok(cli)
+    }
+
+    /// Wrap a binary path without validating it.
+    pub(crate) fn unchecked(path: String) -> Self {
+        Self {
+            path,
+            cli_version: None,
+        }
+    }
+
+    /// Version of the `framework_tool` binary, as reported when it was resolved.
+    pub fn cli_version(&self) -> Option<String> {
+        self.cli_version.clone()
     }
 
     pub async fn power(&self) -> Result<PowerBatteryInfo, String> {
         const TTL: Duration = Duration::from_secs(5);
         global_cache::cache_get_or_update("framework_tool.power", TTL, true, || async {
-            let out = self.run(&["--power", "-vv"]).await?;
-            Ok(parse_power(&out))
+            self.exec("power", |ec| ec.power(), || async {
+                let out = self.run(&["--power", "-vv"]).await?;
+                Ok(parse_power(&out))
+            })
+            .await
         })
         .await
     }
@@ -61,70 +84,130 @@ impl FrameworkTool {
     pub async fn thermal(&self) -> Result<ThermalParsed, String> {
         const TTL: Duration = Duration::from_secs(1);
         global_cache::cache_get_or_update("framework_tool.thermal", TTL, true, || async {
-            let out = self.run(&["--thermal"]).await?;
-            Ok(parse_thermal(&out))
+            self.exec("thermal", |ec| ec.thermal(), || async {
+                let out = self.run(&["--thermal"]).await?;
+                Ok(parse_thermal(&out))
+            })
+            .await
         })
         .await
     }
 
+    /// Hardware/firmware versions. `tool_version` always describes the CLI binary; `ec_backend`
+    /// says which backend answered.
     pub async fn versions(&self) -> Result<VersionsParsed, String> {
+        let cli_version = self.cli_version.clone();
+        self.exec(
+            "versions",
+            move |ec| {
+                let mut v = ec.versions()?;
+                v.tool_version = cli_version;
+                v.ec_backend = Some(format!("{} in-process", ec_lib::label()));
+                Ok(v)
+            },
+            || async {
+                let mut v = self.cli_versions().await?;
+                v.ec_backend = Some(format!("framework_tool CLI (in-process {})", ec_lib::status().await));
+                Ok(v)
+            },
+        )
+        .await
+    }
+
+    /// `framework_tool --versions`, always via the CLI (validates the binary itself).
+    pub async fn cli_versions(&self) -> Result<VersionsParsed, String> {
         let out = self.run(&["--versions"]).await?;
         Ok(parse_versions(&out))
     }
 
     pub async fn set_fan_duty(&self, percent: u32, fan_index: Option<u32>) -> Result<(), String> {
-        let percent_s = percent.to_string();
-        let fan_idx_s = fan_index.map(|idx| idx.to_string());
-        let mut args: Vec<&str> = vec!["--fansetduty"];
-        if let Some(ref idxs) = fan_idx_s {
-            args.push(idxs.as_str());
-        }
-        args.push(percent_s.as_str());
-        let _ = self.run(&args).await?;
-        Ok(())
+        self.exec("set_fan_duty", move |ec| ec.set_fan_duty(percent, fan_index), || async {
+            let percent_s = percent.to_string();
+            let fan_idx_s = fan_index.map(|idx| idx.to_string());
+            let mut args: Vec<&str> = vec!["--fansetduty"];
+            if let Some(ref idxs) = fan_idx_s {
+                args.push(idxs.as_str());
+            }
+            args.push(percent_s.as_str());
+            let _ = self.run(&args).await?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn autofanctrl(&self) -> Result<(), String> {
-        let _ = self.run(&["--autofanctrl"]).await?;
-        Ok(())
+        self.exec("autofanctrl", |ec| ec.autofanctrl(), || async {
+            let _ = self.run(&["--autofanctrl"]).await?;
+            Ok(())
+        })
+        .await
     }
 
     /// Get charge limit min/max percentage as reported by EC
-    pub async fn charge_limit_get(&self) -> Result<super::framework_tool_parser::BatteryChargeLimitInfo, String> {
+    pub async fn charge_limit_get(&self) -> Result<BatteryChargeLimitInfo, String> {
         use super::framework_tool_parser::parse_charge_limit;
         const TTL: Duration = Duration::from_secs(5);
         global_cache::cache_get_or_update("framework_tool.charge_limit", TTL, true, || async {
-            let out = self.run(&["--charge-limit"]).await?;
-            let info = parse_charge_limit(&out);
-            if info.charge_limit_min_pct.is_some() || info.charge_limit_max_pct.is_some() {
-                Ok(info)
-            } else {
-                Err("failed to parse charge limit".to_string())
-            }
+            self.exec("charge_limit_get", |ec| ec.charge_limit_get(), || async {
+                let out = self.run(&["--charge-limit"]).await?;
+                let info = parse_charge_limit(&out);
+                if info.charge_limit_min_pct.is_some() || info.charge_limit_max_pct.is_some() {
+                    Ok(info)
+                } else {
+                    Err("failed to parse charge limit".to_string())
+                }
+            })
+            .await
         })
         .await
     }
 
     /// Set max charge limit percentage
     pub async fn charge_limit_set(&self, max_pct: u8) -> Result<(), String> {
-        let arg = max_pct.to_string();
-        let _ = self.run(&["--charge-limit", &arg]).await?;
-        Ok(())
+        self.exec("charge_limit_set", move |ec| ec.charge_limit_set(max_pct), || async {
+            let arg = max_pct.to_string();
+            let _ = self.run(&["--charge-limit", &arg]).await?;
+            Ok(())
+        })
+        .await
     }
 
     /// Set charge rate limit in C; optional SoC threshold in percent
     pub async fn charge_rate_limit_set(&self, rate_c: f32, soc_threshold_pct: Option<u8>) -> Result<(), String> {
-        let rate = format!("{:.3}", rate_c);
-        match soc_threshold_pct {
-            Some(soc) => {
-                let s = soc.to_string();
-                let _ = self.run(&["--charge-rate-limit", &rate, &s]).await?;
-            }
-            None => {
-                let _ = self.run(&["--charge-rate-limit", &rate]).await?;
-            }
-        }
-        Ok(())
+        self.exec(
+            "charge_rate_limit_set",
+            move |ec| ec.charge_rate_limit_set(rate_c, soc_threshold_pct),
+            || async {
+                let rate = format!("{:.3}", rate_c);
+                match soc_threshold_pct {
+                    Some(soc) => {
+                        let s = soc.to_string();
+                        let _ = self.run(&["--charge-rate-limit", &rate, &s]).await?;
+                    }
+                    None => {
+                        let _ = self.run(&["--charge-rate-limit", &rate]).await?;
+                    }
+                }
+                Ok(())
+            },
+        )
+        .await
+    }
+
+    /// Try `lib_op` in-process, falling back to `cli_op` (spawning framework_tool).
+    async fn exec<R, L, C, Fut>(&self, op: &'static str, lib_op: L, cli_op: C) -> Result<R, String>
+    where
+        R: Send + 'static,
+        L: FnOnce(&mut ec_lib::Ctx) -> Result<R, String> + Send + 'static,
+        C: FnOnce() -> Fut,
+        Fut: Future<Output = Result<R, String>>,
+    {
+        with_fallback(op, ec_lib::call(op, lib_op), cli_op).await
+    }
+
+    /// Run framework_tool directly (no in-process backend, no cache).
+    pub(crate) async fn run_cli(&self, args: &[&str]) -> Result<String, String> {
+        self.run(args).await
     }
 
     async fn run(&self, args: &[&str]) -> Result<String, String> {
@@ -153,6 +236,48 @@ impl FrameworkTool {
         .await;
         TOOL_SUSPECT.store(result.is_err(), Ordering::Relaxed);
         result
+    }
+}
+
+/// Use the in-process result if there is one, otherwise run the CLI variant.
+async fn with_fallback<R, LF, C, Fut>(op: &'static str, lib: LF, cli_op: C) -> Result<R, String>
+where
+    LF: Future<Output = Result<R, LibError>>,
+    C: FnOnce() -> Fut,
+    Fut: Future<Output = Result<R, String>>,
+{
+    match lib.await {
+        Ok(v) => {
+            TOOL_SUSPECT.store(false, Ordering::Relaxed);
+            Ok(v)
+        }
+        Err(e) => {
+            note_fallback(op, &e);
+            cli_op().await
+        }
+    }
+}
+
+/// Log a CLI fallback: once per operation at warn level, then at debug level.
+fn note_fallback(op: &'static str, e: &LibError) {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    match e {
+        // State changes (unavailable/stopped/busy) are logged by ec_lib itself.
+        LibError::Unavailable | LibError::Busy => {}
+        LibError::Ec(_) | LibError::Panicked(_) => {
+            static WARNED: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+            let first = WARNED
+                .get_or_init(Default::default)
+                .lock()
+                .map(|mut w| w.insert(op))
+                .unwrap_or(false);
+            if first {
+                warn!("EC: in-process {} failed ({}); using framework_tool for this call", op, e);
+            } else {
+                tracing::debug!("EC: in-process {} failed ({}); using framework_tool", op, e);
+            }
+        }
     }
 }
 
@@ -222,6 +347,11 @@ fn candidate_paths() -> Vec<String> {
     paths
 }
 
+/// First existing framework_tool binary (install path, then PATH), without validating it.
+pub(crate) fn default_cli_path() -> Option<String> {
+    candidate_paths().into_iter().next()
+}
+
 /// Find any runnable copy (install path, then PATH; winget once on Windows).
 async fn resolve_existing() -> Result<FrameworkTool, String> {
     for path in candidate_paths() {
@@ -251,10 +381,8 @@ pub async fn install_version(tag: &str) -> Result<(), String> {
 
     if let Some(installed) = install_path() {
         if installed.exists() {
-            let cli = FrameworkTool {
-                path: installed.to_string_lossy().to_string(),
-            };
-            if cli.versions().await.ok().and_then(|v| v.tool_version).as_deref() == Some(want) {
+            let cli = FrameworkTool::unchecked(installed.to_string_lossy().to_string());
+            if cli.cli_versions().await.ok().and_then(|v| v.tool_version).as_deref() == Some(want) {
                 info!("framework_tool {} already at {}", tag, installed.display());
                 return Ok(());
             }
@@ -346,4 +474,45 @@ async fn attempt_install_via_direct_download(tag: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    #[tokio::test]
+    async fn in_process_result_skips_cli() {
+        let cli_runs = AtomicUsize::new(0);
+        let runs = &cli_runs;
+        let r = with_fallback("t", async { Ok::<u8, LibError>(1) }, move || async move {
+            runs.fetch_add(1, Ordering::SeqCst);
+            Ok::<u8, String>(2)
+        })
+        .await;
+        assert_eq!(r, Ok(1));
+        assert_eq!(cli_runs.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn every_in_process_error_falls_back_to_cli() {
+        for e in [
+            LibError::Unavailable,
+            LibError::Busy,
+            LibError::Ec("x".into()),
+            LibError::Panicked("p".into()),
+        ] {
+            let r = with_fallback("t", async move { Err::<u8, LibError>(e) }, || async { Ok::<u8, String>(2) }).await;
+            assert_eq!(r, Ok(2));
+        }
+    }
+
+    #[tokio::test]
+    async fn cli_error_is_returned_after_fallback() {
+        let r = with_fallback("t", async { Err::<u8, LibError>(LibError::Unavailable) }, || async {
+            Err::<u8, String>("exit 1".to_string())
+        })
+        .await;
+        assert_eq!(r, Err("exit 1".to_string()));
+    }
 }
