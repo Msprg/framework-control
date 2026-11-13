@@ -1,0 +1,93 @@
+# Daily report on how the mods branch stands against upstream (see FORK.md). Read-only: it never
+# pushes. It fails when upstream main has commits the mods branch doesn't, so GitHub sends a
+# notification; upstream dev is reported as an early warning only.
+# Scheduled runs use the default branch, so mods must be the fork's default branch.
+name: Fork upstream check
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: mods
+          fetch-depth: 0
+      - name: Compare with upstream
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          out="$GITHUB_STEP_SUMMARY"
+          git config user.name fork-check
+          git config user.email fork-check@users.noreply.github.com
+          git remote add upstream https://github.com/ozturkkl/framework-control.git
+          git fetch -q upstream main dev
+          mods=$(git rev-parse HEAD)
+
+          # Upstream files the in-process EC backend and the installer fixes mirror or patch.
+          # Changes there need a review even when the rebase is clean (FORK.md, "Parity").
+          watch="service/src/cli/framework_tool.rs service/src/cli/framework_tool_parser.rs service/src/routes.rs service/wix/main.wxs service/Cargo.toml"
+
+          echo "# Upstream check for mods @ ${mods:0:7}" >> "$out"
+          behind_main=0
+          for b in main dev; do
+            up="upstream/$b"
+            n=$(git rev-list --count "$mods..$up")
+            echo "" >> "$out"
+            if [ "$n" -eq 0 ]; then
+              echo "## upstream $b: up to date" >> "$out"
+              continue
+            fi
+            [ "$b" = main ] && behind_main=$n
+            base=$(git merge-base "$mods" "$up")
+            echo "## upstream $b: $n commit(s) not in mods" >> "$out"
+            git log --format='- `%h` %s (%ad)' --date=short "$base..$up" | head -40 >> "$out"
+
+            changed=$(git diff --name-only "$base" "$up" -- $watch)
+            if [ -n "$changed" ]; then
+              echo "" >> "$out"
+              echo "**Parity review needed**, upstream changed:" >> "$out"
+              for f in $changed; do echo "- \`$f\`" >> "$out"; done
+            fi
+
+            echo "" >> "$out"
+            if conflicts=$(git merge-tree --write-tree --name-only "$up" "$mods"); then
+              echo "Merge test: no conflicts." >> "$out"
+            else
+              echo "Merge test: conflicts in" >> "$out"
+              echo "$conflicts" | sed -n '2,/^$/p' | sed '/^$/d; s/.*/- `&`/' >> "$out"
+            fi
+            git checkout -q --detach "$mods"
+            if git rebase -q "$up" >/dev/null 2>&1; then
+              echo "Rebase test: the patch stack applies cleanly." >> "$out"
+            else
+              stop=$(git log -1 --format='`%h` %s' REBASE_HEAD 2>/dev/null || echo "?")
+              echo "Rebase test: stops at $stop." >> "$out"
+              git rebase --abort
+            fi
+          done
+
+          pinned=$(sed -nE 's/^framework_lib = \{ version = "=([^"]+)".*/\1/p' service/Cargo.toml)
+          lib=$(curl -fsS -A "framework-control-fork-check" https://crates.io/api/v1/crates/framework_lib | jq -r .crate.max_stable_version || echo "?")
+          tool=$(gh release view -R FrameworkComputer/framework-system --json tagName -q .tagName || echo "?")
+          echo "" >> "$out"
+          echo "## framework_lib" >> "$out"
+          echo "Pinned $pinned; latest on crates.io $lib; latest framework_tool release $tool." >> "$out"
+          if [ "$lib" != "$pinned" ] && [ "$lib" != "?" ]; then
+            echo "A newer framework_lib exists; see FORK.md before bumping the pin." >> "$out"
+          fi
+
+          cat "$out"
+          if [ "$behind_main" -gt 0 ]; then
+            echo "::error::mods is $behind_main commit(s) behind upstream main; see FORK.md (Syncing)"
+            exit 1
+          fi
