@@ -22,6 +22,13 @@ rust-embed = { version = "8", features = ["interpolate-folder-path", "include-ex
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 regex = "1"
 
+# In-process EC access (see src/cli/ec_lib.rs). Pinned exactly: the adapter mirrors this release's
+# CLI output and works around its driver-layer panics, so bump it deliberately.
+# Default features (hidapi, rusb) are off: they pull in libudev/libusb and aren't needed for EC access.
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+framework_lib = { version = "=0.6.6", default-features = false }
+dmidecode = { version = "1", default-features = false }
+
 [features]
 default = ["embed-ui"]
 embed-ui = ["dep:rust-embed"]

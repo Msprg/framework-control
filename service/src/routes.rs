@@ -340,7 +340,8 @@ impl Api {
         use crate::cli::framework_tool::{latest_tag, list_available_versions};
         let mut out = crate::types::FrameworkToolVersions::default();
         if let Some(cli) = state.framework_tool.read().await.clone() {
-            out.current_version = cli.versions().await.ok().and_then(|v| v.tool_version);
+            // Recorded when the binary was validated; describes the CLI, not the in-process backend.
+            out.current_version = cli.cli_version();
         }
         out.available_tags = list_available_versions().await.unwrap_or_default();
         out.latest_tag = latest_tag().await.ok();

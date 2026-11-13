@@ -188,7 +188,7 @@ fn config_dir() -> PathBuf {
     }
 }
 
-fn config_path() -> PathBuf {
+pub(crate) fn config_path() -> PathBuf {
     if let Ok(p) = std::env::var("FRAMEWORK_CONTROL_CONFIG") {
         return PathBuf::from(p);
     }

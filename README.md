@@ -85,7 +85,7 @@ This software is provided "as is," without warranty of any kind, express or impl
 
 - **Backend Service**: Rust (Tokio + Poem + poem-openapi)
   - Exposes HTTP API with OpenAPI generation
-  - Executes Framework CLI (`framework_tool`) for all EC interactions
+  - Talks to the EC in-process through `framework_lib`, falling back to the Framework CLI (`framework_tool`)
   - Power management: RyzenAdj on Windows, native kernel interfaces (AMD P-State EPP, cpufreq) on Linux
   - Applies persisted fan-control and power config at boot
 - **Frontend UI**: Svelte + TypeScript + Vite + Tailwind + DaisyUI
@@ -93,9 +93,11 @@ This software is provided "as is," without warranty of any kind, express or impl
   - Real-time telemetry updates
 - **Packaging**: WiX MSI installer for Windows; Linux install script, AUR package, and nixpkgs / NixOS module
 
-## Why CLI-only for EC?
+## EC access: in-process with CLI fallback
 
-Early iterations used the Rust `framework_lib` directly. On Windows that required build-time git metadata and custom driver bindings, which added fragility to packaging and dev setup. Pivoting to the official CLI (`framework_tool`) gives a stable, tested interface with consistent elevation semantics on Windows. It also maps cleanly to Linux.
+Early iterations used the Rust `framework_lib` directly. On Windows that required build-time git metadata and custom driver bindings, which added fragility to packaging and dev setup, so the service moved to spawning the official CLI (`framework_tool`). Since then `framework_lib` is published on crates.io without git dependencies and uses the standard `windows` crate, so the service links it again for the calls it makes often (temperatures and fan speeds about once a second), which avoids ~100 ms of process startup per call on Windows.
+
+The CLI is still the fallback. The in-process backend runs on a single dedicated thread, only uses the Windows CrosEC driver or Linux `/dev/cros_ec` (never raw port I/O), and steps aside for the CLI whenever it errors, panics, or hangs; see `service/src/cli/ec_lib.rs`. Set `FRAMEWORK_CONTROL_EC_BACKEND=cli` to always use the CLI.
 
 ## Contributing
 
