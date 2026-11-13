@@ -32,12 +32,19 @@ Upstream's `CHANGELOG.md` is left alone so release syncs don't conflict there. F
   - It reports new upstream `main` and `dev` commits, changes to the files listed under Parity, whether the patch stack merges and rebases cleanly, and whether a newer framework_lib or framework_tool release exists.
   - It fails while `mods` is behind upstream `main`, so GitHub sends a notification.
 - **Upstream workflows are disabled on the fork**: `release-service.yml`, `deploy-pages.yml` and `external-pr-notice.yml`. Without this, syncing `main` would publish unmodified upstream releases under the fork. Keep them disabled (`gh workflow list -R Msprg/framework-control --all`).
+  - A workflow file that upstream adds later arrives enabled and can run on the very push that brings it in.
+  - Before each sync, check `git diff --stat fork/main origin/main -- .github/workflows`. Disable anything that publishes or deploys as soon as it shows up in the list.
+- **Don't use GitHub's "Sync fork" button on `mods`.** It merges upstream into the branch, or offers to discard the patch commits. The daily check's failure email links to the repo page where that button sits.
 
 ## Installing
 
 Fork builds have in-app updates disabled (`FRAMEWORK_CONTROL_UPDATE_REPO` is empty). The upstream updater would install an upstream release over this build, which drops the in-process EC, and upstream releases before 0.5.6 also wipe the user data.
 
 To install or update, download the `windows-msi` artifact from the green fork build of the tagged `mods` commit and install it. The `linux-tarball` artifact is the Linux equivalent.
+
+Artifacts expire after 90 days. The tags keep the source, not the installers. Either keep the MSI you installed, or rebuild it with `gh workflow run fork-build.yml -R Msprg/framework-control --ref mods/<version>-<n>`.
+
+The upgrade test installs upstream's latest stable release first. Once upstream releases a version newer than `mods`, that job fails on the MSI downgrade block until `mods` is synced. It means a sync is due, not that the installer is broken.
 
 Installing an upstream MSI replaces the mods. Up to 0.5.5 it also deletes `C:\ProgramData\FrameworkControl\config.json` and `battery-history.json`, so back them up first.
 
@@ -46,7 +53,8 @@ Installing an upstream MSI replaces the mods. Up to 0.5.5 it also deletes `C:\Pr
 Sync per upstream release, when upstream `main` moves. Watch `dev` through the daily check to see conflicts coming.
 
 ```sh
-git fetch origin                                  # origin = upstream, fork = Msprg
+git fetch --multiple origin fork                  # origin = upstream, fork = Msprg
+git diff --stat fork/main origin/main -- .github/workflows   # new upstream workflows? see above
 gh repo sync Msprg/framework-control -b main      # mirror
 sha=$(git rev-parse --short origin/main)
 git switch -c sync/$sha mods
