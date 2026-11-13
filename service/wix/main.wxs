@@ -181,6 +181,15 @@
                     </Component>
                     -->
 
+                    <Component Id='ThirdPartyNotices' Guid='*'>
+                        <File
+                            Id='ThirdPartyNoticesFile'
+                            Name='THIRD_PARTY_NOTICES.md'
+                            DiskId='1'
+                            Source='THIRD_PARTY_NOTICES.md'
+                            KeyPath='yes'/>
+                    </Component>
+
                     <Component Id='binary0' Guid='*'>
                         <File
                             Id='exe0'
@@ -279,6 +288,7 @@
             <!--<ComponentRef Id='License'/>-->
 
             <ComponentRef Id='binary0'/>
+            <ComponentRef Id='ThirdPartyNotices'/>
             <ComponentRef Id='WinSwComponent'/>
             <ComponentRef Id='WinSwConfigComponent'/>
             <ComponentRef Id='UninstallShortcut'/>

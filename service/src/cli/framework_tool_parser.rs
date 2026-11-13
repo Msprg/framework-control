@@ -300,6 +300,9 @@ pub struct VersionsParsed {
     pub ec_build_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ec_current_image: Option<String>,
+    /// Which EC backend answered: framework_lib in-process, or the framework_tool CLI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ec_backend: Option<String>,
 }
 pub fn parse_versions(text: &str) -> VersionsParsed {
     let mut out = VersionsParsed::default();
