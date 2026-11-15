@@ -82,6 +82,14 @@
             AllowSameVersionUpgrades='yes'
             DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
 
+        <!--
+          With the old product still installed while the new files are copied, Windows Installer's
+          file versioning rules could keep an old unversioned file (the service exe is unversioned).
+          'a' makes every file of this package overwrite what is there; the package ships only its
+          own files, so nothing shared can be downgraded.
+        -->
+        <Property Id='REINSTALLMODE' Value='amus'/>
+
         <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
         <Property Id='DiskPrompt' Value='framework-control-service Installation'/>
 
