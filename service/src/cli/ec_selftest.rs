@@ -14,6 +14,7 @@ use super::framework_tool::{default_cli_path, FrameworkTool};
 use super::framework_tool_parser::{
     parse_charge_limit, parse_thermal, PowerBatteryInfo, ThermalParsed, VersionsParsed,
 };
+use super::hardware_info::{parse_expansion_bay, parse_input_deck, parse_intrusion, parse_pd_ports, parse_privacy};
 
 struct Report {
     failures: u32,
@@ -154,6 +155,39 @@ pub async fn run(args: &[String]) -> i32 {
         (l, c) => r.fail(&format!("in-process {:?} / CLI {:?}", l.err(), c.err())),
     }
 
+    // ---- hardware status views ----------------------------------------------------------------
+    println!("\n[hardware]");
+    compare_view(
+        &mut r,
+        "PD ports",
+        ec_lib::call("pd_ports", |ec| ec.pd_ports()).await,
+        cli.run_cli(&["--pdports"]).await.map(|o| parse_pd_ports(&o)),
+    );
+    compare_view(
+        &mut r,
+        "expansion bay",
+        ec_lib::call("expansion_bay", |ec| ec.expansion_bay()).await,
+        cli.run_cli(&["--expansion-bay"]).await.map(|o| parse_expansion_bay(&o)),
+    );
+    compare_view(
+        &mut r,
+        "input deck",
+        ec_lib::call("input_deck", |ec| ec.input_deck()).await,
+        cli.run_cli(&["--inputdeck"]).await.map(|o| parse_input_deck(&o)),
+    );
+    compare_view(
+        &mut r,
+        "privacy switches",
+        ec_lib::call("privacy", |ec| ec.privacy()).await,
+        cli.run_cli(&["--privacy"]).await.map(|o| parse_privacy(&o)),
+    );
+    compare_view(
+        &mut r,
+        "chassis intrusion",
+        ec_lib::call("intrusion", |ec| ec.intrusion()).await,
+        cli.run_cli(&["--intrusion"]).await.map(|o| parse_intrusion(&o)),
+    );
+
     // ---- timing -------------------------------------------------------------------------------
     println!("\n[timing]");
     let cli_ref = &cli;
@@ -166,8 +200,18 @@ pub async fn run(args: &[String]) -> i32 {
     let cli_power = time_n(5, move || async move { cli_ref.cli_power().await.is_ok() }).await;
     print_timing("thermal in-process", &lib_thermal);
     print_timing("thermal CLI", &cli_thermal);
+    let lib_hardware = time_n(20, || async {
+        let pd = ec_lib::call("pd_ports", |ec| ec.pd_ports()).await.is_ok();
+        let bay = ec_lib::call("expansion_bay", |ec| ec.expansion_bay()).await.is_ok();
+        let deck = ec_lib::call("input_deck", |ec| ec.input_deck()).await.is_ok();
+        let privacy = ec_lib::call("privacy", |ec| ec.privacy()).await.is_ok();
+        let intrusion = ec_lib::call("intrusion", |ec| ec.intrusion()).await.is_ok();
+        pd && bay && deck && privacy && intrusion
+    })
+    .await;
     print_timing("power in-process", &lib_power);
     print_timing("power CLI", &cli_power);
+    print_timing("hardware in-process", &lib_hardware);
 
     println!("\nbackend status: {}", ec_lib::status().await);
     if r.failures == 0 {
@@ -360,6 +404,23 @@ fn compare_power(r: &mut Report, l: &PowerBatteryInfo, c: &PowerBatteryInfo) {
         "rate: {:?} mA (CLI {:?})",
         l.present_rate_ma, c.present_rate_ma
     ));
+}
+
+/// A status view must be identical from both backends, including being absent on this machine.
+fn compare_view<T: PartialEq + std::fmt::Debug>(
+    r: &mut Report,
+    name: &str,
+    lib: Result<Option<T>, ec_lib::LibError>,
+    cli: Result<Option<T>, String>,
+) {
+    match (lib, cli) {
+        (Ok(None), Ok(None)) => r.note(&format!("{name}: not available on this machine")),
+        (Ok(l), Ok(c)) if l == c => r.ok(&format!("{name}: {l:?}")),
+        (Ok(l), Ok(c)) => r.fail(&format!("{name}: {l:?} (CLI {c:?})")),
+        // The CLI exits non-zero for some options on models without the feature.
+        (Ok(None), Err(c)) => r.note(&format!("{name}: not available on this machine (CLI: {c})")),
+        (l, c) => r.fail(&format!("{name}: in-process {l:?} / CLI {c:?}")),
+    }
 }
 
 fn compare_versions(r: &mut Report, l: &VersionsParsed, c: &VersionsParsed) {

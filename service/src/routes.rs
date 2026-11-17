@@ -286,6 +286,14 @@ impl Api {
         Ok(Json(v))
     }
 
+    /// Read-only hardware status from the EC: USB-C PD ports, expansion bay, input deck,
+    /// privacy switches and chassis intrusion. Sections this machine doesn't have are absent.
+    #[oai(path = "/hardware", method = "get", operation_id = "getHardware")]
+    async fn get_hardware(&self, state: Data<&AppState>) -> ApiResult<crate::cli::hardware_info::HardwareInfo> {
+        let cli = require_framework_tool_async(&state).await?;
+        Ok(Json(cli.hardware_info().await))
+    }
+
     #[oai(path = "/config", method = "get", operation_id = "getConfig")]
     async fn get_config(&self, state: Data<&AppState>) -> ApiResult<crate::types::Config> {
         let cfg = state.config.read().await.clone();

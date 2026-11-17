@@ -221,7 +221,7 @@ impl FrameworkTool {
     }
 
     /// Try `lib_op` in-process, falling back to `cli_op` (spawning framework_tool).
-    async fn exec<R, L, C, Fut>(&self, op: &'static str, lib_op: L, cli_op: C) -> Result<R, String>
+    pub(super) async fn exec<R, L, C, Fut>(&self, op: &'static str, lib_op: L, cli_op: C) -> Result<R, String>
     where
         R: Send + 'static,
         L: FnOnce(&mut ec_lib::Ctx) -> Result<R, String> + Send + 'static,

@@ -18,6 +18,7 @@
     import PowerControl from "./components/PowerControl.svelte";
     import BatteryControl from "./components/BatteryControl.svelte";
     import Sensors from "./components/Sensors.svelte";
+    import HardwareStatus from "./components/HardwareStatus.svelte";
     import Panel from "./components/Panel.svelte";
     import VersionMismatchModal from "./components/VersionMismatchModal.svelte";
     import AnnouncementModal from "./components/AnnouncementModal.svelte";
@@ -422,6 +423,12 @@
                 </div>
             {/each}
         </section>
+
+        {#if live}
+            <section aria-label="Hardware status">
+                <HardwareStatus />
+            </section>
+        {/if}
     </div>
     {#if showMismatchGate}
         <VersionMismatchModal

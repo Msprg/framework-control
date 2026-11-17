@@ -2,6 +2,7 @@ pub mod ec_lib;
 pub mod ec_selftest;
 pub mod framework_tool;
 pub mod framework_tool_parser;
+pub mod hardware_info;
 
 #[cfg(target_os = "windows")]
 pub mod ryzen_adj;

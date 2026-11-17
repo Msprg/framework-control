@@ -17,6 +17,11 @@ Oldest first, as they sit on top of upstream:
    - Also: the `framework_lib` pin in `Cargo.toml`, `THIRD_PARTY_NOTICES.md` in both packages, and the "EC access" card in the device header.
    - Opt out with `FRAMEWORK_CONTROL_EC_BACKEND=cli`.
 5. **fork: CI, upstream check, this file.** Contains `.github/workflows/fork-build.yml`, `.github/workflows/fork-upstream-check.yml` and `FORK.md`.
+6. **hardware status views.** USB-C PD ports, expansion bay, input deck, privacy switches and chassis intrusion, read like the rest of the EC data (in-process first, CLI as fallback).
+   - New files: `service/src/cli/hardware_info.rs` and `web/src/components/HardwareStatus.svelte`, `HardwarePortCard.svelte` and `HardwareGroupCard.svelte`.
+   - On a Framework 16 the card is a map: `web/public/assets/laptop-16.jpg` (upstream's header photo) with a marker per port and section. If upstream replaces that photo, redo the crop and the marker positions in `FRAMEWORK_16` in `HardwareStatus.svelte`.
+   - Also: the status methods on `Ctx` in `ec_lib.rs`, `GET /api/hardware` in `routes.rs`, the `[hardware]` section of `--ec-selftest`, and the card mounted below the dashboard in `web/src/App.svelte`.
+   - `FrameworkTool::exec` becomes `pub(super)` so `hardware_info.rs` can use it.
 
 Upstream's `CHANGELOG.md` is left alone so release syncs don't conflict there. Fork changes are listed at the end of this file.
 
@@ -78,6 +83,10 @@ The in-process backend copies what `framework_tool` plus the parsers return. A c
 
 - **`service/src/cli/framework_tool.rs` and `framework_tool_parser.rs`:** port any change in what the CLI path returns to `ec_lib.rs` (`thermal_from_raw`, `power_from_raw`, `BatteryBlock`, `charge_rate_current_ma` and the `Ctx` methods), and extend the parity tests at the bottom of `ec_lib.rs`. The upstream code that resolves the CLI path is reworked by the EC commit (`at_path`, `unchecked`, `cli_versions`, `default_cli_path`), so port changes there by hand.
 - **`service/src/routes.rs`:** anything new that calls `FrameworkTool` should go through `exec`/`with_fallback`.
+- **`service/src/cli/hardware_info.rs`:** the parsers follow framework_tool 0.6.6's output for `--pdports`, `--expansion-bay`, `--inputdeck` (Framework 16 format only), `--privacy` and `--intrusion`. The name tables follow framework_lib 0.6.6's enums.
+  - On a new `framework_tool` release or a `framework_lib` bump, diff those printers and enums, and the response structs `ec_lib.rs` reads (`EcResponseGetPdPortState`, `EcResponseExpansionBayStatus`, `EcResponseGetGpuSerial`, `EcResponseGetGpuPcie`, `EcResponseDeckState`, `EcResponsePrivacySwitches`, the two chassis responses). Then run `--ec-selftest`.
+  - Keep these views off the library's own helpers (`get_input_deck_status`, `get_gpu_serial`, `check_bay_status`, ...). They print to the service log or panic on unknown values, and three panics stop the in-process backend for fan control too.
+  - Don't make the hardware card a dashboard panel. A new `DashboardPanelId` ends up in `config.json`, and a build without it (an older fork build, any upstream build) then rejects the whole config and starts on defaults.
 - **`service/wix/main.wxs`:** keep `afterInstallExecute`, `REINSTALLMODE=amus`, `DesktopFolder`, the unconditioned `RuntimeDataCleanup` component with its fixed GUID, and the `ThirdPartyNotices` component.
 - **A new `framework_tool` release:** the service downloads the latest one at runtime on Windows, so CLI output can change while the library pin doesn't. Check its changelog and run `framework-control-service --ec-selftest` on hardware.
 - **Bumping `framework_lib`:** read its diff around the APIs `ec_lib.rs` uses (`CrosEc`, memmap offsets, `get_thermal`, `get_charge_limit`, `set_charge_*`, `fan_set_duty`, `autofanctrl`, `version_info`, smbios). Then bump the label in `ec_lib::label()` and the notices file, and run `--ec-selftest` on hardware.
@@ -96,6 +105,11 @@ The `sync/dev-<sha>` branch carries the patch stack on upstream `dev` (0.5.6, no
 
 ## Fork changelog
 
+- **2026-11-17: hardware status views.**
+  - A "Hardware" card below the dashboard shows the USB-C ports (negotiated voltage, current and power, power direction, PD contract, EPR, DisplayPort alt mode), the Framework 16 expansion bay and input deck, the privacy switches and the chassis intrusion history.
+  - On a Framework 16 the card is laid out around a photo of the laptop: every port and section is joined to its place on the machine and coloured by its state.
+  - `GET /api/hardware` serves them. A section the machine doesn't have is left out, and the card hides when there are none.
+  - `--ec-selftest` compares each view between the in-process backend and `framework_tool`.
 - **2026-11-15: ported onto upstream 0.5.6 (`dev`).**
   - The in-process EC returns the CLI's values on machines without a battery, instead of falling back to the CLI on every call.
   - The no-battery CLI workaround also covers `--ec-selftest`.

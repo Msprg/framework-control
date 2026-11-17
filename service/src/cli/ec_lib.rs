@@ -604,11 +604,20 @@ pub fn charge_rate_current_ma(rate_c: f32, design_capacity_mah: u32) -> u32 {
 mod platform {
     use std::collections::HashMap;
 
-    use framework_lib::chromium_ec::commands::{ChargeStateCmd, EcRequestChargeStateGetV0};
-    use framework_lib::chromium_ec::{CrosEc, CrosEcDriver, CrosEcDriverType, EcCurrentImage, EcError, EcRequestRaw};
+    use framework_lib::chromium_ec::commands::{
+        ChargeStateCmd, DeckStateMode, EcRequestChargeStateGetV0, EcRequestChassisIntrusionControl,
+        EcRequestChassisOpenCheck, EcRequestDeckState, EcRequestExpansionBayStatus, EcRequestGetGpuPcie,
+        EcRequestGetGpuSerial, EcRequestGetPdPortState, EcRequestPrivacySwitches,
+    };
+    use framework_lib::chromium_ec::{
+        CrosEc, CrosEcDriver, CrosEcDriverType, EcCurrentImage, EcError, EcRequestRaw, EcResponseStatus, EcResult,
+    };
 
     use super::super::framework_tool_parser::{
         BatteryChargeLimitInfo, PowerBatteryInfo, ThermalParsed, VersionsParsed,
+    };
+    use super::super::hardware_info::{
+        self as hw, ExpansionBayInfo, InputDeckInfo, IntrusionInfo, PdPortInfo, PrivacyInfo,
     };
     use super::{memmap, BatteryBlock, ChargerState, Probe};
 
@@ -632,6 +641,26 @@ mod platform {
         format!("{:?}", e)
     }
 
+    /// For the read-only status views: `Ok(None)` when the EC answered with an error status.
+    /// Models without the feature reject the command, and `framework_tool` would get the same
+    /// answer, so that means "not available here" and is no reason to spawn the CLI. Only a
+    /// failure to talk to the EC at all is an error.
+    fn optional<T>(op: &str, res: EcResult<T>) -> Result<Option<T>, String> {
+        match res {
+            Ok(v) => Ok(Some(v)),
+            Err(EcError::Response(
+                EcResponseStatus::InvalidCommand
+                | EcResponseStatus::InvalidVersion
+                | EcResponseStatus::InvalidParameter,
+            )) => Ok(None),
+            Err(e @ (EcError::Response(_) | EcError::UnknownResponseCode(_))) => {
+                tracing::debug!("EC: {} not available: {:?}", op, e);
+                Ok(None)
+            }
+            Err(e) => Err(ec_err(e)),
+        }
+    }
+
     /// Open the EC on the worker thread. Never selects the port-I/O driver.
     pub fn open() -> Result<Ctx, String> {
         let Some(ec) = CrosEc::with(DRIVER) else {
@@ -651,6 +680,7 @@ mod platform {
             ec,
             sensor_names: HashMap::new(),
             fan_names: None,
+            framework16: None,
         })
     }
 
@@ -660,6 +690,8 @@ mod platform {
         sensor_names: HashMap<u8, String>,
         /// Per fan slot, as framework_lib names them for this platform.
         fan_names: Option<Vec<String>>,
+        /// Whether SMBIOS says this is a Framework 16, looked up once.
+        framework16: Option<bool>,
     }
 
     impl Probe for Ctx {
@@ -824,6 +856,111 @@ mod platform {
                 ec_backend: None,
             })
         }
+
+        // The status views below send the same host commands as the matching `framework_tool`
+        // options and decode the responses in `hardware_info`. framework_lib's own helpers for
+        // them print to stdout or panic on values they don't know.
+
+        /// Equivalent of `framework_tool --pdports`.
+        pub fn pd_ports(&mut self) -> Result<Option<Vec<PdPortInfo>>, String> {
+            let mut ports = Vec::new();
+            for port in 0..hw::PD_PORT_COUNT {
+                let res = EcRequestGetPdPortState { port }.send_command(&self.ec);
+                // The EC rejects port indexes it doesn't have.
+                let Some(r) = optional("pd_ports", res)? else {
+                    continue;
+                };
+                let raw = hw::PdPortRaw {
+                    c_state: r.c_state,
+                    pd_state: r.pd_state,
+                    power_role: r.power_role,
+                    data_role: r.data_role,
+                    vconn: r.vconn,
+                    epr_active: r.epr_active,
+                    epr_support: r.epr_support,
+                    cc_polarity: r.cc_polarity,
+                    voltage_mv: { r.voltage },
+                    current_ma: { r.current },
+                    active_port: r.active_port,
+                    alt_mode: r.pd_alt_mode_status,
+                };
+                ports.push(hw::pd_port_from_raw(port, &raw));
+            }
+            Ok((!ports.is_empty()).then_some(ports))
+        }
+
+        /// Equivalent of `framework_tool --expansion-bay`, without the EEPROM header (an I2C
+        /// read through the EC, too slow and too invasive to poll).
+        pub fn expansion_bay(&mut self) -> Result<Option<ExpansionBayInfo>, String> {
+            let res = EcRequestExpansionBayStatus {}.send_command(&self.ec);
+            let Some(status) = optional("expansion_bay", res)? else {
+                return Ok(None);
+            };
+            let serial = EcRequestGetGpuSerial { idx: 0 }.send_command(&self.ec).ok();
+            let pcie = EcRequestGetGpuPcie {}.send_command(&self.ec).ok();
+            let raw = hw::ExpansionBayRaw {
+                state: status.state,
+                board_id_0: status.board_id_0,
+                board_id_1: status.board_id_1,
+                serial: serial.filter(|s| s.valid != 0).map(|s| s.serial),
+                pcie: pcie.map(|p| (p.gpu_pcie_config, p.gpu_vendor)),
+            };
+            Ok(Some(hw::expansion_bay_from_raw(&raw)))
+        }
+
+        /// Equivalent of `framework_tool --inputdeck` on a Framework 16. Other models have no
+        /// module slots, and the CLI prints different things for them.
+        pub fn input_deck(&mut self) -> Result<Option<InputDeckInfo>, String> {
+            if !self.is_framework16() {
+                return Ok(None);
+            }
+            let res = EcRequestDeckState {
+                mode: DeckStateMode::ReadOnly,
+            }
+            .send_command(&self.ec);
+            Ok(optional("input_deck", res)?.map(|r| {
+                let board_id: [u8; hw::INPUT_DECK_SLOTS] = r.board_id;
+                hw::input_deck_from_raw(&board_id, r.deck_state)
+            }))
+        }
+
+        /// Equivalent of `framework_tool --privacy`.
+        pub fn privacy(&mut self) -> Result<Option<PrivacyInfo>, String> {
+            let res = EcRequestPrivacySwitches {}.send_command(&self.ec);
+            Ok(optional("privacy", res)?.map(|r| hw::privacy_from_raw(r.microphone, r.camera)))
+        }
+
+        /// Equivalent of `framework_tool --intrusion`. Reads only: the clear fields stay zero.
+        pub fn intrusion(&mut self) -> Result<Option<IntrusionInfo>, String> {
+            let res = EcRequestChassisOpenCheck {}.send_command(&self.ec);
+            let Some(open) = optional("intrusion", res)? else {
+                return Ok(None);
+            };
+            let open_status = open.status;
+            let res = EcRequestChassisIntrusionControl {
+                clear_magic: 0,
+                clear_chassis_status: 0,
+            }
+            .send_command(&self.ec);
+            Ok(optional("intrusion", res)?.map(|h| {
+                hw::intrusion_from_raw(
+                    open_status,
+                    h.chassis_ever_opened,
+                    h.coin_batt_ever_remove,
+                    h.total_open_count,
+                    h.vtr_open_count,
+                )
+            }))
+        }
+
+        fn is_framework16(&mut self) -> bool {
+            *self.framework16.get_or_insert_with(|| {
+                framework_lib::smbios::get_family()
+                    .map(|family| format!("{:?}", family))
+                    .as_deref()
+                    == Some("Framework16")
+            })
+        }
     }
 }
 
@@ -832,6 +969,7 @@ mod platform {
     use super::super::framework_tool_parser::{
         BatteryChargeLimitInfo, PowerBatteryInfo, ThermalParsed, VersionsParsed,
     };
+    use super::super::hardware_info::{ExpansionBayInfo, InputDeckInfo, IntrusionInfo, PdPortInfo, PrivacyInfo};
     use super::Probe;
 
     pub const LIB_VERSION: &str = "n/a";
@@ -879,6 +1017,21 @@ mod platform {
             Err(UNSUPPORTED.into())
         }
         pub fn versions(&mut self) -> Result<VersionsParsed, String> {
+            Err(UNSUPPORTED.into())
+        }
+        pub fn pd_ports(&mut self) -> Result<Option<Vec<PdPortInfo>>, String> {
+            Err(UNSUPPORTED.into())
+        }
+        pub fn expansion_bay(&mut self) -> Result<Option<ExpansionBayInfo>, String> {
+            Err(UNSUPPORTED.into())
+        }
+        pub fn input_deck(&mut self) -> Result<Option<InputDeckInfo>, String> {
+            Err(UNSUPPORTED.into())
+        }
+        pub fn privacy(&mut self) -> Result<Option<PrivacyInfo>, String> {
+            Err(UNSUPPORTED.into())
+        }
+        pub fn intrusion(&mut self) -> Result<Option<IntrusionInfo>, String> {
             Err(UNSUPPORTED.into())
         }
     }
