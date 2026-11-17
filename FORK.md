@@ -110,6 +110,7 @@ The `sync/dev-<sha>` branch carries the patch stack on upstream `dev` (0.5.6, no
   - On a Framework 16 the card is laid out around a photo of the laptop: every port and section is joined to its place on the machine and coloured by its state.
   - `GET /api/hardware` serves them. A section the machine doesn't have is left out, and the card hides when there are none.
   - `--ec-selftest` compares each view between the in-process backend and `framework_tool`.
+  - The camera privacy reading follows camera power, not the switch: on a Framework 16 it reads disconnected until an app uses the camera. The card therefore says "Off or idle" for it.
 - **2026-11-15: ported onto upstream 0.5.6 (`dev`).**
   - The in-process EC returns the CLI's values on machines without a battery, instead of falling back to the CLI on every call.
   - The no-battery CLI workaround also covers `--ec-selftest`.

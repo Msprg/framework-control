@@ -87,7 +87,9 @@ pub struct InputDeckInfo {
 pub struct PrivacyInfo {
     /// false when the switch has cut the microphone off
     pub microphone_connected: bool,
-    /// false when the switch has cut the camera off
+    /// true while the camera is powered. false when the switch has cut it off, and also while
+    /// nothing uses the camera: seen on a Framework 16, where the OS powers the idle camera down
+    /// and the EC then reports it like a cut-off one.
     pub camera_connected: bool,
 }
 
@@ -305,7 +307,8 @@ pub fn input_deck_from_raw(board_id: &[u8; INPUT_DECK_SLOTS], deck_state: u8) ->
     }
 }
 
-/// The EC reports 1 for a connected (not cut off) device.
+/// The EC reports 1 for a connected (not cut off) device. For the camera that means powered,
+/// see [`PrivacyInfo::camera_connected`].
 pub fn privacy_from_raw(microphone: u8, camera: u8) -> PrivacyInfo {
     PrivacyInfo {
         microphone_connected: microphone == 1,

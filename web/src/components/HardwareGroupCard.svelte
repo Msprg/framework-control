@@ -1,7 +1,8 @@
 <script context="module" lang="ts">
     /** How a value, a card or its marker on the laptop photo is coloured. */
     export type Tone = "ok" | "info" | "warn" | "error" | "idle" | "plain";
-    export type Row = { label: string; value: string; tone?: Tone };
+    /** `hint` replaces the value as the hover text when the value needs explaining. */
+    export type Row = { label: string; value: string; tone?: Tone; hint?: string };
     export type Group = { title: string; icon: string; rows: Row[] };
 
     export const TONE_TEXT: Record<Tone, string> = {
@@ -46,7 +47,7 @@
                 <dt class="opacity-60 shrink-0">{row.label}</dt>
                 <dd
                     class="text-right truncate {row.tone ? TONE_TEXT[row.tone] : ''}"
-                    title={row.value}
+                    title={row.hint ?? row.value}
                 >
                     {row.value}
                 </dd>

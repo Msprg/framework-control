@@ -360,17 +360,24 @@
     }
 
     function privacyGroup(privacy: PrivacyInfo): Group {
-        const row = (label: string, connected: boolean): Row => ({
-            label,
-            value: connected ? "Connected" : "Cut off",
-            tone: connected ? undefined : "warn",
-        });
         return {
             title: "Privacy switches",
             icon: "mdi:shield-lock-outline",
             rows: [
-                row("Microphone", privacy.microphone_connected),
-                row("Camera", privacy.camera_connected),
+                {
+                    label: "Microphone",
+                    value: privacy.microphone_connected ? "Connected" : "Cut off",
+                    tone: privacy.microphone_connected ? undefined : "warn",
+                },
+                // The EC only sees the camera while it is powered, and the OS powers it down when
+                // nothing uses it. "Not connected" therefore can't be told apart from "idle".
+                {
+                    label: "Camera",
+                    value: privacy.camera_connected ? "Connected" : "Off or idle",
+                    hint: privacy.camera_connected
+                        ? "The camera is powered, so its switch is on"
+                        : "The EC only sees the camera while something uses it: either the switch has cut it off, or it is idle",
+                },
             ],
         };
     }
